@@ -25,6 +25,13 @@ class Memorial extends Model
     /** @use HasFactory<MemorialFactory> */
     use HasFactory;
 
+    protected $attributes = [
+        'photo_url' => null,
+        'incense_count' => 0,
+        'candle_count' => 0,
+        'flower_count' => 0,
+    ];
+
     protected function casts(): array
     {
         return [

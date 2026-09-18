@@ -56,6 +56,11 @@ class MemorialApiTest extends TestCase
             'death_anniversary' => '2020-01-01',
         ])->assertUnauthorized();
 
+        $this->post('/api/memorials', [
+            'name' => '张三',
+            'death_anniversary' => '2020-01-01',
+        ])->assertUnauthorized()->assertJsonPath('message', '未登录');
+
         $this->postJson('/api/memorials/'.$memorial->id.'/offerings', [
             'type' => 'incense',
         ])->assertUnauthorized();
@@ -89,6 +94,9 @@ class MemorialApiTest extends TestCase
         $response->assertCreated()
             ->assertJsonPath('name', '周明')
             ->assertJsonPath('death_anniversary', '2021-05-20')
+            ->assertJsonPath('offerings.incense', 0)
+            ->assertJsonPath('offerings.candle', 0)
+            ->assertJsonPath('offerings.flower', 0)
             ->assertJsonStructure(['id', 'token', 'share_path']);
 
         $this->assertNotEmpty($response->json('token'));
