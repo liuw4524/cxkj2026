@@ -118,12 +118,18 @@ miniapp/dist/dev/mp-weixin
 
 也可用 HBuilderX 打开整个 `miniapp/` 目录，运行到微信开发者工具（CLI 项目会使用项目内编译器）。
 
-可选：浏览器预览同一套 uni-app（非验收必需）：
+可选：浏览器预览同一套 uni-app（非微信开发者工具验收必需，便于无 DevTools 时看页面）：
 
 ```bash
 cd miniapp
 npm run dev:h5
 ```
+
+然后打开：
+
+- 首页 `http://localhost:5173/#/`
+- 演示纪念页 `http://localhost:5173/#/pages/memorial/detail?token=demo-token-0001`
+- 无效 token `http://localhost:5173/#/pages/memorial/detail?token=not-a-token`
 
 ## QA 冒烟（约 3 分钟）
 
