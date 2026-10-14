@@ -30944,8 +30944,8 @@ const AM = {
   webglError: "当前浏览器似乎不支持 WebGL"
 };
 function YM(i, { imageUrl: t, hotspots: e, onPlace: n, onSelect: s }) {
-  let r = [...e || []];
-  const a = new ey({
+  let r = [...e || []], a = t;
+  const o = new ey({
     container: i,
     panorama: t,
     navbar: ["zoom", "move"],
@@ -30959,26 +30959,29 @@ function YM(i, { imageUrl: t, hotspots: e, onPlace: n, onSelect: s }) {
         markers: Tc(r)
       })
     ]
-  }), o = a.getPlugin(wc), l = (h, c) => {
-    r = h;
-    const d = Tc(h);
-    c && d.push({
+  }), l = o.getPlugin(wc), h = (c, d) => {
+    r = c;
+    const u = Tc(c);
+    d && u.push({
       id: "draft",
-      position: { yaw: c.yaw, pitch: c.pitch },
+      position: { yaw: d.yaw, pitch: d.pitch },
       anchor: "bottom center",
       html: '<span class="hotspot is-draft"><span class="hotspot-dot"></span><span class="hotspot-label">新热点</span></span>'
-    }), o.setMarkers(d);
+    }), l.setMarkers(u);
   };
-  return a.addEventListener("click", ({ data: h }) => {
-    !h || h.rightclick || (l(r, h), n == null || n({ yaw: h.yaw, pitch: h.pitch }));
-  }), o.addEventListener("select-marker", ({ marker: h, rightClick: c }) => {
-    c || h.id === "draft" || s == null || s(h.id);
+  return o.addEventListener("click", ({ data: c }) => {
+    !c || c.rightclick || (h(r, c), n == null || n({ yaw: c.yaw, pitch: c.pitch }));
+  }), l.addEventListener("select-marker", ({ marker: c, rightClick: d }) => {
+    d || c.id === "draft" || s == null || s(c.id);
   }), {
-    setMarkers(h) {
-      l(h || [], null);
+    setMarkers(c) {
+      h(c || [], null);
+    },
+    async setPanorama(c, d) {
+      c && c !== a && (a = c, await o.setPanorama(c, { showLoader: !1, transition: !1 })), h(d || [], null);
     },
     destroy() {
-      a.destroy();
+      o.destroy();
     }
   };
 }

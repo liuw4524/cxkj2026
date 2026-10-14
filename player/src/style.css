@@ -180,6 +180,33 @@ html, body, #app {
   text-overflow: ellipsis;
 }
 
+.hotspot-arrow {
+  min-width: 64px;
+  min-height: 64px;
+  justify-content: flex-end;
+}
+
+.arrow-chevron {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(15, 118, 110, 0.94);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+  position: relative;
+}
+
+.arrow-chevron::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 12px;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-bottom: 16px solid white;
+}
+
+.hotspot-arrow.is-missing .arrow-chevron { background: #d97706; }
+
 .message {
   min-height: 100%;
   display: grid;

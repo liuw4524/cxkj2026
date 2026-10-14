@@ -1,6 +1,12 @@
 import { Viewer } from '@photo-sphere-viewer/core';
 import { MarkersPlugin } from '@photo-sphere-viewer/markers-plugin';
-import { escapeHtml, findEntryScene, resolveHotspotJump } from './navigation.js';
+import {
+  escapeHtml,
+  findEntryScene,
+  findEntryStandpoint,
+  resolveHotspotJump,
+} from './navigation.js';
+import { createTransitionGate, runWalkTransition } from './transition.js';
 
 const LANG = {
   zoom: '缩放',
@@ -80,10 +86,12 @@ function startViewer(root, tour) {
     return;
   }
 
-  let current = entry;
+  let currentScene = entry;
+  let currentStandpoint = findEntryStandpoint(entry);
   let viewer;
   let markers;
   let toastTimer;
+  const gate = createTransitionGate();
 
   const showToast = (message) => {
     toast.hidden = false;
@@ -96,11 +104,18 @@ function startViewer(root, tour) {
 
   const renderStrip = () => {
     strip.innerHTML = tour.scenes.map((scene) => `
-      <button type="button" class="thumb ${scene.id === current.id ? 'is-active' : ''}" data-scene-id="${scene.id}">
+      <button type="button" class="thumb ${scene.id === currentScene.id ? 'is-active' : ''}" data-scene-id="${scene.id}">
         <img src="${escapeHtml(scene.thumbnail_url || scene.image_url)}" alt="${escapeHtml(scene.name)}">
         <span>${escapeHtml(scene.name)}</span>
       </button>
     `).join('');
+  };
+
+  const updateChrome = () => {
+    const label = placeLabel(currentScene, currentStandpoint);
+    sceneName.textContent = label;
+    sceneName.dataset.standpointName = currentStandpoint?.name || '';
+    renderStrip();
   };
 
   const setLoading = (percent) => {
@@ -118,115 +133,239 @@ function startViewer(root, tour) {
   };
 
   const applyMarkers = () => {
-    markers?.setMarkers(markersFor(current));
+    markers?.setMarkers(markersFor(currentStandpoint));
   };
 
-  const switchTo = async (scene, { bustCache = false } = {}) => {
-    if (!scene?.image_url) {
+  const openPanorama = async (standpoint, { bustCache = false, loading = false, transition = true } = {}) => {
+    if (!standpoint?.image_url) {
       showError();
-      return;
+      return false;
     }
 
-    current = scene;
-    sceneName.textContent = scene.name;
-    renderStrip();
-    setLoading(8);
+    const panorama = bustCache ? cacheBust(standpoint.image_url) : standpoint.image_url;
 
-    const panorama = bustCache ? cacheBust(scene.image_url) : scene.image_url;
+    if (!viewer) {
+      if (loading) {
+        setLoading(8);
+      }
+      viewer = new Viewer({
+        container: viewerEl,
+        panorama,
+        caption: placeLabel(currentScene, standpoint),
+        navbar: ['zoom', 'fullscreen'],
+        lang: LANG,
+        loadingTxt: '正在加载全景…',
+        mousewheel: true,
+        mousemove: true,
+        touchmoveTwoFingers: false,
+        defaultZoomLvl: 30,
+        defaultYaw: standpoint.yaw || 0,
+        defaultPitch: standpoint.pitch || 0,
+        plugins: [
+          MarkersPlugin.withConfig({
+            clickEventOnMarker: false,
+            markers: markersFor(standpoint),
+          }),
+        ],
+      });
+      markers = viewer.getPlugin(MarkersPlugin);
+      viewer.addEventListener('load-progress', (event) => {
+        if (!overlay.hidden) {
+          setLoading(event.progress);
+        }
+      });
+      viewer.addEventListener('panorama-loaded', () => {
+        if (stage.dataset.transitioning === 'true') {
+          return;
+        }
+        applyMarkers();
+        hideOverlay();
+      });
+      viewer.addEventListener('panorama-error', () => {
+        showError();
+      });
+      markers.addEventListener('select-marker', ({ marker }) => {
+        const hotspot = (currentStandpoint?.hotspots || []).find((item) => String(item.id) === String(marker.id));
+        const result = resolveHotspotJump(hotspot, tour.scenes);
+
+        if (!result.ok) {
+          showToast(result.message);
+          return;
+        }
+
+        walkTo(result.scene, result.standpoint, hotspot);
+      });
+      return true;
+    }
+
+    if (loading) {
+      setLoading(8);
+    }
+
+    const loaded = await viewer.setPanorama(panorama, {
+      caption: placeLabel(currentScene, standpoint),
+      position: { yaw: standpoint.yaw || 0, pitch: standpoint.pitch || 0 },
+      zoom: 30,
+      showLoader: false,
+      transition: transition
+        ? { speed: 800, effect: 'fade', rotation: false }
+        : false,
+    });
+
+    if (loaded === false) {
+      return false;
+    }
+
+    applyMarkers();
+    if (loading) {
+      hideOverlay();
+    }
+    return true;
+  };
+
+  const cutTo = (scene, standpoint, options = {}) => gate.run(async () => {
+    currentScene = scene;
+    currentStandpoint = standpoint;
+    updateChrome();
+    stage.dataset.transitioning = 'false';
 
     try {
-      if (!viewer) {
-        viewer = new Viewer({
-          container: viewerEl,
-          panorama,
-          caption: scene.name,
-          navbar: ['zoom', 'fullscreen'],
-          lang: LANG,
-          loadingTxt: '正在加载全景…',
-          mousewheel: true,
-          mousemove: true,
-          touchmoveTwoFingers: false,
-          defaultZoomLvl: 30,
-          plugins: [
-            MarkersPlugin.withConfig({
-              clickEventOnMarker: false,
-              markers: markersFor(scene),
-            }),
-          ],
-        });
-        markers = viewer.getPlugin(MarkersPlugin);
-        viewer.addEventListener('load-progress', (event) => {
-          if (!overlay.hidden) {
-            setLoading(event.progress);
-          }
-        });
-        viewer.addEventListener('panorama-loaded', () => {
-          applyMarkers();
-          hideOverlay();
-        });
-        viewer.addEventListener('panorama-error', () => {
-          showError();
-        });
-        markers.addEventListener('select-marker', ({ marker }) => {
-          const hotspot = current.hotspots.find((item) => String(item.id) === String(marker.id));
-          const result = resolveHotspotJump(hotspot, tour.scenes);
-
-          if (!result.ok) {
-            showToast(result.message);
-            return;
-          }
-
-          switchTo(result.scene);
-        });
-        return;
+      const ok = await openPanorama(standpoint, { loading: true, transition: true, ...options });
+      if (!ok) {
+        showError();
       }
-
-      await viewer.setPanorama(panorama, {
-        caption: scene.name,
-        transition: { speed: 800, effect: 'fade' },
-        showLoader: false,
-      });
-      applyMarkers();
-      hideOverlay();
     } catch {
       showError();
     }
-  };
+  });
+
+  const walkTo = (scene, standpoint, hotspot) => gate.run(async () => {
+    if (!viewer) {
+      currentScene = scene;
+      currentStandpoint = standpoint;
+      updateChrome();
+      await openPanorama(standpoint, { loading: true });
+      return;
+    }
+
+    const previousScene = currentScene;
+    const previousStandpoint = currentStandpoint;
+    currentScene = scene;
+    currentStandpoint = standpoint;
+    updateChrome();
+    stage.dataset.transitioning = 'true';
+
+    try {
+      await runWalkTransition({
+        from: previousStandpoint,
+        to: standpoint,
+        hotspot,
+        animate: (animation) => viewer.animate(animation),
+        setPanorama: (url, panoramaOptions) => viewer.setPanorama(url, {
+          ...panoramaOptions,
+          caption: placeLabel(scene, standpoint),
+        }),
+      });
+      applyMarkers();
+      hideOverlay();
+    } catch (error) {
+      currentScene = previousScene;
+      currentStandpoint = previousStandpoint;
+      updateChrome();
+
+      if (error?.code !== 'aborted') {
+        try {
+          await viewer.setPanorama(previousStandpoint.image_url, {
+            showLoader: false,
+            transition: false,
+            position: {
+              yaw: previousStandpoint.yaw || 0,
+              pitch: previousStandpoint.pitch || 0,
+            },
+          });
+          applyMarkers();
+          showToast('走过去失败，请重试');
+        } catch {
+          showError();
+        }
+      }
+    } finally {
+      stage.dataset.transitioning = 'false';
+    }
+  });
 
   strip.addEventListener('click', (event) => {
     const button = event.target.closest('[data-scene-id]');
 
-    if (!button) {
+    if (!button || gate.active) {
       return;
     }
 
     const scene = tour.scenes.find((item) => String(item.id) === button.dataset.sceneId);
 
     if (scene) {
-      switchTo(scene);
+      cutTo(scene, findEntryStandpoint(scene));
     }
   });
 
   retry.addEventListener('click', () => {
-    switchTo(current, { bustCache: true });
+    if (gate.active) {
+      return;
+    }
+
+    cutTo(currentScene, currentStandpoint, { bustCache: true });
   });
 
-  renderStrip();
-  switchTo(entry);
+  updateChrome();
+  cutTo(entry, currentStandpoint);
   stage.dataset.ready = 'true';
 }
 
-function markersFor(scene) {
-  return (scene.hotspots || []).map((hotspot) => ({
-    id: String(hotspot.id),
-    position: { yaw: hotspot.yaw, pitch: hotspot.pitch },
-    anchor: 'bottom center',
-    tooltip: hotspot.target_available ? hotspot.title : `${hotspot.title}（目标场景已不存在）`,
-    html: `<button type="button" class="hotspot ${hotspot.target_available ? '' : 'is-missing'}">
-      <span class="hotspot-dot"></span>
-      <span class="hotspot-label">${escapeHtml(hotspot.title)}</span>
-    </button>`,
-  }));
+function placeLabel(scene, standpoint) {
+  const many = (scene?.standpoints || []).length > 1;
+
+  if (!many || !standpoint?.name) {
+    return scene?.name || '';
+  }
+
+  return `${scene.name} · ${standpoint.name}`;
+}
+
+function hotspotLabel(hotspot) {
+  const text = String(hotspot.title || hotspot.label || '').trim();
+
+  if (text) {
+    return text;
+  }
+
+  return hotspot.target_kind === 'standpoint' ? '向前走' : '前往';
+}
+
+function markersFor(standpoint) {
+  return (standpoint?.hotspots || []).map((hotspot) => {
+    const walk = hotspot.target_kind === 'standpoint';
+    const label = hotspotLabel(hotspot);
+    const missing = hotspot.target_available === false;
+    const hint = missing
+      ? `${label}（${walk ? '目标站位已不存在' : '目标场景已不存在'}）`
+      : label;
+
+    return {
+      id: String(hotspot.id),
+      position: { yaw: hotspot.yaw, pitch: hotspot.pitch },
+      anchor: walk ? 'center center' : 'bottom center',
+      tooltip: hint,
+      html: walk
+        ? `<button type="button" class="hotspot hotspot-arrow ${missing ? 'is-missing' : ''}" data-hotspot-id="${hotspot.id}">
+            <span class="arrow-chevron" aria-hidden="true"></span>
+            <span class="hotspot-label">${escapeHtml(label)}</span>
+          </button>`
+        : `<button type="button" class="hotspot ${missing ? 'is-missing' : ''}" data-hotspot-id="${hotspot.id}">
+            <span class="hotspot-dot"></span>
+            <span class="hotspot-label">${escapeHtml(label)}</span>
+          </button>`,
+    };
+  });
 }
 
 function showOverlay(overlay, textNode, progressNode, message, percent, spinning) {
@@ -252,16 +391,16 @@ function renderShell(root) {
     <div class="shell">
       <header class="topbar">
         <strong data-title>全景漫游</strong>
-        <span data-scene-name></span>
+        <span data-scene-name data-standpoint-name=""></span>
       </header>
-      <div class="stage" data-stage>
+      <div class="stage" data-stage data-transitioning="false">
         <div class="viewer" data-viewer></div>
         <div class="overlay" data-overlay>
           <p data-overlay-text>正在加载全景…</p>
           <div class="progress" data-progress hidden><span></span></div>
           <button type="button" data-retry hidden>重试</button>
         </div>
-        <p class="hint">单指拖动 · 双指缩放</p>
+        <p class="hint">单指拖动 · 双指缩放 · 点箭头走动</p>
         <div class="toast" data-toast hidden></div>
       </div>
       <nav class="strip" data-strip aria-label="场景列表"></nav>

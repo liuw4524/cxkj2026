@@ -28,4 +28,4 @@ cd "$ROOT/miniapp"
 collect_tests '*.test.mjs'
 node --experimental-detect-module --test "${TESTS[@]}"
 
-echo "P0 自动检查通过。手机上的拖动、双指缩放和热点点击请按 README 验收清单再走一遍。"
+echo "自动检查通过。手机宽度下连续点三次「向前走」，以及拖动、缩放，请按 README 再走一遍。"

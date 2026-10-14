@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Scene;
+use App\Models\Standpoint;
 use RuntimeException;
 
 class SceneImageProcessor
@@ -11,11 +12,21 @@ class SceneImageProcessor
 
     public function process(Scene $scene): void
     {
-        if (blank($scene->image_path)) {
+        $this->apply($scene);
+    }
+
+    public function processStandpoint(Standpoint $standpoint): void
+    {
+        $this->apply($standpoint);
+    }
+
+    private function apply(Scene|Standpoint $record): void
+    {
+        if (blank($record->image_path)) {
             return;
         }
 
-        [$local, $temporary] = $this->storage->readLocal($scene->image_path);
+        [$local, $temporary] = $this->storage->readLocal($record->image_path);
 
         try {
             if (! is_file($local)) {
@@ -26,17 +37,17 @@ class SceneImageProcessor
             $width = isset($info[0]) ? (int) $info[0] : null;
             $height = isset($info[1]) ? (int) $info[1] : null;
             $type = $info[2] ?? 0;
-            $thumbPath = $this->thumbnailPath($scene->image_path);
+            $thumbPath = $this->thumbnailPath($record->image_path);
             $written = $this->writeThumbnail($local, $type, $thumbPath);
 
-            $scene->forceFill([
+            $record->forceFill([
                 'width' => $width,
                 'height' => $height,
-                'image_url' => $this->storage->url($scene->image_path),
+                'image_url' => $this->storage->url($record->image_path),
                 'thumbnail_path' => $written ? $thumbPath : null,
                 'thumbnail_url' => $written
                     ? $this->storage->url($thumbPath)
-                    : $this->storage->url($scene->image_path),
+                    : $this->storage->url($record->image_path),
             ])->saveQuietly();
         } finally {
             if ($temporary && is_file($local)) {

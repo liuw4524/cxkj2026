@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && vite build --config vite.editor.config.js",
-    "test": "node --test test/**/*.test.js"
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@photo-sphere-viewer/core": "^5.15.1",

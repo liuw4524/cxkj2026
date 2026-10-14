@@ -7,6 +7,7 @@ use App\Filament\Resources\TourResource\Pages\CreateTour;
 use App\Filament\Resources\TourResource\Pages\EditTour;
 use App\Filament\Resources\TourResource\Pages\ListTours;
 use App\Filament\Resources\TourResource\Pages\ManageSceneHotspots;
+use App\Filament\Resources\TourResource\Pages\ManageSceneStandpoints;
 use App\Filament\Resources\TourResource\RelationManagers\ScenesRelationManager;
 use App\Models\Tour;
 use App\Support\EmbedGuide;
@@ -154,6 +155,7 @@ class TourResource extends Resource
             'create' => CreateTour::route('/create'),
             'edit' => EditTour::route('/{record}/edit'),
             'hotspots' => ManageSceneHotspots::route('/{record}/scenes/{scene}/hotspots'),
+            'standpoints' => ManageSceneStandpoints::route('/{record}/scenes/{scene}/standpoints'),
         ];
     }
 }

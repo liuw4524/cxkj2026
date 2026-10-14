@@ -5,10 +5,14 @@ namespace App\Filament\Resources\TourResource\Pages;
 use App\Filament\Resources\TourResource;
 use App\Models\Hotspot;
 use App\Models\Scene;
+use App\Models\Standpoint;
 use App\Models\Tour;
+use App\Support\HotspotLink;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\Page;
 use Filament\Support\Enums\Width;
+use Illuminate\Support\Collection;
+use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Locked;
 
 class ManageSceneHotspots extends Page
@@ -17,7 +21,7 @@ class ManageSceneHotspots extends Page
 
     protected static ?string $title = '标注热点';
 
-    protected ?string $subheading = '在全景上点击放置热点，填写标题和要跳转的场景。';
+    protected ?string $subheading = '在全景上点击放置箭头。目标可以是另一个站位，也可以是整个场景。';
 
     protected string $view = 'filament.tours.manage-hotspots';
 
@@ -31,13 +35,15 @@ class ManageSceneHotspots extends Page
 
     public ?int $editingId = null;
 
+    public ?int $currentStandpointId = null;
+
     public ?float $yaw = null;
 
     public ?float $pitch = null;
 
     public string $hotspotTitle = '';
 
-    public ?int $targetSceneId = null;
+    public string $targetRef = '';
 
     public function mount(int|string $record, int|string|Scene $scene): void
     {
@@ -51,7 +57,9 @@ class ManageSceneHotspots extends Page
 
         abort_unless((int) $scene->tour_id === (int) $this->tour->id, 404);
 
-        $this->scene = $scene->load('hotspots');
+        $this->scene = $scene->load('standpoints');
+        $entry = $this->scene->standpoints->firstWhere('is_entry', true) ?? $this->scene->standpoints->first();
+        $this->currentStandpointId = $entry?->id;
     }
 
     public function getHeading(): string
@@ -61,6 +69,47 @@ class ManageSceneHotspots extends Page
         }
 
         return '标注热点 · '.$this->scene->name;
+    }
+
+    public function currentStandpoint(): ?Standpoint
+    {
+        if (! $this->currentStandpointId) {
+            return null;
+        }
+
+        return $this->scene->standpoints()->find($this->currentStandpointId);
+    }
+
+    public function currentImageUrl(): ?string
+    {
+        $standpoint = $this->currentStandpoint();
+
+        return $standpoint?->image_url ?: $this->scene->image_url;
+    }
+
+    /**
+     * @return array<int, Standpoint>
+     */
+    public function sceneStandpoints(): array
+    {
+        return $this->scene->standpoints()->orderBy('sort_order')->orderBy('id')->get()->all();
+    }
+
+    /**
+     * @return Collection<int, Standpoint>
+     */
+    public function targetStandpoints(): Collection
+    {
+        return Standpoint::query()
+            ->with('scene')
+            ->whereHas('scene', fn ($query) => $query->where('tour_id', $this->tour->id))
+            ->get()
+            ->sortBy([
+                ['scene.sort_order', 'asc'],
+                ['sort_order', 'asc'],
+                ['id', 'asc'],
+            ])
+            ->values();
     }
 
     /**
@@ -78,21 +127,43 @@ class ManageSceneHotspots extends Page
     }
 
     /**
+     * @return array<int, Hotspot>
+     */
+    public function visibleHotspots(): array
+    {
+        $query = $this->scene->hotspots()->orderBy('id');
+
+        if ($this->currentStandpointId) {
+            $query->where('standpoint_id', $this->currentStandpointId);
+        }
+
+        return $query->get()->all();
+    }
+
+    /**
      * @return array<int, array<string, mixed>>
      */
     public function markerPayload(): array
     {
-        return $this->scene->hotspots()
-            ->orderBy('id')
-            ->get()
+        return collect($this->visibleHotspots())
             ->map(fn (Hotspot $hotspot): array => [
                 'id' => $hotspot->id,
-                'title' => $hotspot->title,
+                'title' => $hotspot->title !== '' ? $hotspot->title : ($hotspot->target_kind === 'standpoint' ? '向前走' : '前往'),
                 'yaw' => (float) $hotspot->yaw,
                 'pitch' => (float) $hotspot->pitch,
                 'target_scene_id' => $hotspot->target_scene_id,
+                'target_standpoint_id' => $hotspot->target_standpoint_id,
+                'target_kind' => $hotspot->target_kind,
             ])
             ->all();
+    }
+
+    public function selectStandpoint(int $id): void
+    {
+        abort_unless($this->scene->standpoints()->whereKey($id)->exists(), 404);
+        $this->currentStandpointId = $id;
+        $this->resetDraft();
+        $this->dispatch('standpoint-changed', imageUrl: $this->currentImageUrl(), hotspots: $this->markerPayload());
     }
 
     public function prepareNew(float $yaw, float $pitch): void
@@ -101,7 +172,7 @@ class ManageSceneHotspots extends Page
         $this->yaw = round($yaw, 6);
         $this->pitch = round($pitch, 6);
         $this->hotspotTitle = '';
-        $this->targetSceneId = null;
+        $this->targetRef = '';
         $this->resetErrorBag();
     }
 
@@ -109,55 +180,47 @@ class ManageSceneHotspots extends Page
     {
         $hotspot = $this->scene->hotspots()->findOrFail($id);
         $this->editingId = $hotspot->id;
+        $this->currentStandpointId = $hotspot->standpoint_id ?: $this->currentStandpointId;
         $this->yaw = (float) $hotspot->yaw;
         $this->pitch = (float) $hotspot->pitch;
         $this->hotspotTitle = $hotspot->title;
-        $this->targetSceneId = $hotspot->target_scene_id;
+        $this->targetRef = $hotspot->target_kind === 'standpoint' && $hotspot->target_standpoint_id
+            ? 'standpoint:'.$hotspot->target_standpoint_id
+            : ($hotspot->target_scene_id ? 'scene:'.$hotspot->target_scene_id : '');
         $this->resetErrorBag();
     }
 
     public function save(): void
     {
-        $data = $this->validate([
-            'hotspotTitle' => ['required', 'string', 'max:40'],
-            'targetSceneId' => ['required', 'integer'],
-            'yaw' => ['required', 'numeric', 'between:-6.2832,6.2832'],
-            'pitch' => ['required', 'numeric', 'between:-1.5708,1.5708'],
-        ], [
-            'hotspotTitle.required' => '请填写热点标题。',
-            'hotspotTitle.max' => '热点标题不能超过 40 个字。',
-            'targetSceneId.required' => '请选择目标场景。',
-            'yaw.required' => '请在全景上点击以放置热点。',
-            'pitch.required' => '请在全景上点击以放置热点。',
-        ], [
-            'hotspotTitle' => '标题',
-            'targetSceneId' => '目标场景',
-            'yaw' => '水平角',
-            'pitch' => '垂直角',
-        ]);
+        $parsed = $this->parseTarget($this->targetRef);
 
-        $target = Scene::query()
-            ->where('tour_id', $this->tour->id)
-            ->find($data['targetSceneId']);
-
-        if (! $target) {
-            $this->addError('targetSceneId', '目标场景不存在或已删除。');
+        if ($parsed === null) {
+            $this->addError('targetRef', '请选择跳转目标。');
 
             return;
         }
 
-        if ($target->id === $this->scene->id) {
-            $this->addError('targetSceneId', '目标场景不能是当前场景。');
+        try {
+            $attributes = HotspotLink::attributes($this->tour, $this->scene, [
+                'title' => $this->hotspotTitle,
+                'yaw' => $this->yaw,
+                'pitch' => $this->pitch,
+                'standpoint_id' => $this->currentStandpointId,
+                'target_standpoint_id' => $parsed['kind'] === 'standpoint' ? $parsed['id'] : null,
+                'target_scene_id' => $parsed['kind'] === 'scene' ? $parsed['id'] : null,
+            ]);
+        } catch (ValidationException $exception) {
+            foreach ($exception->errors() as $field => $messages) {
+                $mapped = match ($field) {
+                    'title' => 'hotspotTitle',
+                    'target_scene_id', 'target_standpoint_id' => 'targetRef',
+                    default => $field,
+                };
+                $this->addError($mapped, $messages[0]);
+            }
 
             return;
         }
-
-        $attributes = [
-            'title' => $data['hotspotTitle'],
-            'target_scene_id' => $target->id,
-            'yaw' => $data['yaw'],
-            'pitch' => $data['pitch'],
-        ];
 
         if ($this->editingId) {
             $hotspot = $this->scene->hotspots()->findOrFail($this->editingId);
@@ -177,15 +240,58 @@ class ManageSceneHotspots extends Page
         $this->scene->hotspots()->whereKey($id)->delete();
 
         if ($this->editingId === $id) {
-            $this->editingId = null;
-            $this->hotspotTitle = '';
-            $this->targetSceneId = null;
-            $this->yaw = null;
-            $this->pitch = null;
+            $this->resetDraft();
         }
 
         $this->scene->unsetRelation('hotspots');
         Notification::make()->success()->title('热点已删除')->send();
         $this->dispatch('hotspots-updated', hotspots: $this->markerPayload());
+    }
+
+    public function targetSummary(Hotspot $hotspot): string
+    {
+        if ($hotspot->target_kind === 'standpoint') {
+            $target = $hotspot->targetStandpoint;
+
+            if (! $target) {
+                return '目标站位已不存在';
+            }
+
+            $sceneName = $target->scene?->name;
+
+            return $sceneName ? '走到 '.$sceneName.' · '.$target->name : '走到 '.$target->name;
+        }
+
+        if (! $hotspot->target_scene_id || ! $hotspot->targetScene) {
+            return '目标场景已不存在';
+        }
+
+        return '跳到场景 '.$hotspot->targetScene->name;
+    }
+
+    /**
+     * @return array{kind: string, id: int}|null
+     */
+    private function parseTarget(string $ref): ?array
+    {
+        if (str_starts_with($ref, 'standpoint:')) {
+            return ['kind' => 'standpoint', 'id' => (int) substr($ref, 11)];
+        }
+
+        if (str_starts_with($ref, 'scene:')) {
+            return ['kind' => 'scene', 'id' => (int) substr($ref, 6)];
+        }
+
+        return null;
+    }
+
+    private function resetDraft(): void
+    {
+        $this->editingId = null;
+        $this->hotspotTitle = '';
+        $this->targetRef = '';
+        $this->yaw = null;
+        $this->pitch = null;
+        $this->resetErrorBag();
     }
 }

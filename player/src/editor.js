@@ -24,6 +24,7 @@ const LANG = {
 
 export function mountEditor(container, { imageUrl, hotspots, onPlace, onSelect }) {
   let current = [...(hotspots || [])];
+  let currentUrl = imageUrl;
   const viewer = new Viewer({
     container,
     panorama: imageUrl,
@@ -72,6 +73,13 @@ export function mountEditor(container, { imageUrl, hotspots, onPlace, onSelect }
 
   return {
     setMarkers(list) {
+      paint(list || [], null);
+    },
+    async setPanorama(nextUrl, list) {
+      if (nextUrl && nextUrl !== currentUrl) {
+        currentUrl = nextUrl;
+        await viewer.setPanorama(nextUrl, { showLoader: false, transition: false });
+      }
       paint(list || [], null);
     },
     destroy() {
