@@ -57,7 +57,21 @@ class Scene extends Model
                 ->update(['is_entry' => false]);
         });
 
+        static::created(function (Scene $scene): void {
+            $scene->standpoints()->create([
+                'name' => '默认站位',
+                'is_entry' => true,
+                'sort_order' => 0,
+                'position_x' => 0,
+                'position_y' => 0,
+                'yaw' => 0,
+                'pitch' => 0,
+            ]);
+        });
+
         static::deleting(function (Scene $scene): void {
+            $scene->standpoints()->get()->each->delete();
+
             if (! $scene->is_entry) {
                 return;
             }
@@ -81,6 +95,11 @@ class Scene extends Model
     public function hotspots(): HasMany
     {
         return $this->hasMany(Hotspot::class)->orderBy('id');
+    }
+
+    public function standpoints(): HasMany
+    {
+        return $this->hasMany(Standpoint::class)->orderBy('sort_order')->orderBy('id');
     }
 
     public function markAsEntry(): void

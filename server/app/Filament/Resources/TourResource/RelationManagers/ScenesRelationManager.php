@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\TourResource\RelationManagers;
 
 use App\Filament\Resources\TourResource\Pages\ManageSceneHotspots;
+use App\Filament\Resources\TourResource\Pages\ManageSceneStandpoints;
 use App\Models\Scene;
 use App\Rules\PanoramaUploadRule;
 use App\Support\PanoramaLimits;
@@ -12,8 +13,8 @@ use Filament\Actions\CreateAction;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
-use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\FileUpload;
+use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Schemas\Schema;
@@ -67,6 +68,7 @@ class ScenesRelationManager extends RelationManager
                     ->checkFileExistence(false)
                     ->height(48),
                 TextColumn::make('name')->label('名称'),
+                TextColumn::make('standpoints_count')->counts('standpoints')->label('站位'),
                 IconColumn::make('is_entry')->label('初始场景')->boolean(),
                 TextColumn::make('sort_order')->label('排序'),
                 TextColumn::make('width')
@@ -90,6 +92,12 @@ class ScenesRelationManager extends RelationManager
                         $record->markAsEntry();
                         Notification::make()->success()->title('已设为初始场景')->send();
                     }),
+                Action::make('standpoints')
+                    ->label('管理站位')
+                    ->url(fn (Scene $record): string => ManageSceneStandpoints::getUrl([
+                        'record' => $record->tour_id,
+                        'scene' => $record->id,
+                    ])),
                 Action::make('hotspots')
                     ->label('标注热点')
                     ->visible(fn (Scene $record): bool => filled($record->image_url))

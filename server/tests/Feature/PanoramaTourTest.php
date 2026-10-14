@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Hotspot;
 use App\Models\Scene;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -172,6 +173,95 @@ class PanoramaTourTest extends TestCase
         $this->get('/t/demo-tour')->assertOk()->assertSee('演示样板间');
     }
 
+    public function test_demo_living_room_can_walk_three_steps(): void
+    {
+        $this->artisan('tour:demo')->assertSuccessful();
+
+        $payload = $this->getJson('/api/tours/demo-tour')->assertOk()->json();
+        $living = $payload['scenes'][0];
+        $this->assertSame('客厅', $living['name']);
+        $this->assertGreaterThanOrEqual(4, count($living['standpoints']));
+
+        $current = collect($living['standpoints'])->firstWhere('is_entry', true);
+        $this->assertSame('门口', $current['name']);
+        $names = [];
+
+        for ($step = 0; $step < 3; $step++) {
+            $hotspot = collect($current['hotspots'])->firstWhere('title', '向前走');
+            $this->assertNotNull($hotspot);
+            $this->assertSame('standpoint', $hotspot['target_kind']);
+            $this->assertTrue($hotspot['target_available']);
+            $this->assertNotNull($hotspot['target_standpoint_id']);
+            $next = collect($living['standpoints'])->firstWhere('id', $hotspot['target_standpoint_id']);
+            $this->assertNotNull($next);
+            $this->assertNotSame($current['image_url'], $next['image_url']);
+            $names[] = $next['name'];
+            $current = $next;
+        }
+
+        $this->assertSame(['茶几', '窗边', '阳台'], $names);
+    }
+
+    public function test_deleted_standpoint_makes_incoming_hotspots_fail_safely(): void
+    {
+        $token = $this->token();
+        $created = $this->withToken($token)->postJson('/api/admin/tours', [
+            'name' => '删除站位',
+        ])->assertCreated();
+        $tourId = $created->json('id');
+        $shareCode = $created->json('share_code');
+        $sceneId = $this->uploadScene($token, $tourId, '客厅')->json('id');
+
+        $entryId = $this->withToken($token)
+            ->getJson("/api/admin/tours/{$tourId}")
+            ->json('player.scenes.0.standpoints.0.id');
+
+        $windowId = $this->withToken($token)->postJson("/api/admin/tours/{$tourId}/scenes/{$sceneId}/standpoints", [
+            'name' => '窗边',
+            'position_x' => 0,
+            'position_y' => 2,
+            'yaw' => 0.2,
+            'pitch' => 0,
+        ])->assertCreated()->json('id');
+
+        $hotspotId = $this->withToken($token)->postJson("/api/admin/tours/{$tourId}/scenes/{$sceneId}/hotspots", [
+            'title' => '向前走',
+            'standpoint_id' => $entryId,
+            'target_standpoint_id' => $windowId,
+            'yaw' => 0,
+            'pitch' => -0.4,
+        ])->assertCreated()->json('id');
+
+        $this->withToken($token)
+            ->deleteJson("/api/admin/tours/{$tourId}/standpoints/{$windowId}")
+            ->assertOk()
+            ->assertJsonPath('message', '站位已删除');
+
+        $hotspot = Hotspot::query()->find($hotspotId);
+        $this->assertNotNull($hotspot);
+        $this->assertNull($hotspot->target_standpoint_id);
+        $this->assertSame('standpoint', $hotspot->target_kind);
+
+        $this->withToken($token)
+            ->deleteJson("/api/admin/tours/{$tourId}/standpoints/{$entryId}")
+            ->assertStatus(422)
+            ->assertJsonPath('errors.standpoint.0', '至少保留一个站位。');
+
+        $this->withToken($token)->postJson("/api/admin/tours/{$tourId}/publish")->assertOk();
+
+        $payload = $this->getJson('/api/tours/'.$shareCode)->assertOk()->json();
+        $publicHotspot = $payload['scenes'][0]['standpoints'][0]['hotspots'][0];
+        $this->assertSame('向前走', $publicHotspot['title']);
+        $this->assertFalse($publicHotspot['target_available']);
+        $this->assertNull($publicHotspot['target_standpoint_id']);
+        $this->assertSame('standpoint', $publicHotspot['target_kind']);
+
+        $this->get('/t/'.$shareCode)
+            ->assertOk()
+            ->assertSee('player/assets/player.js', false)
+            ->assertSee('data-share-code="'.$shareCode.'"', false);
+    }
+
     public function test_admin_panel_and_hotspot_page_render_in_chinese(): void
     {
         $this->get('/admin/login')->assertOk()->assertSee('登录');
@@ -203,7 +293,16 @@ class PanoramaTourTest extends TestCase
 
         $hotspotPage->assertOk()
             ->assertSee('标注热点')
-            ->assertSee('pano-editor', false);
+            ->assertSee('pano-editor', false)
+            ->assertSee('跳转目标');
+
+        $this->actingAs($this->admin, 'web')
+            ->get("/admin/tours/{$tourId}/scenes/{$sceneId}/standpoints")
+            ->assertOk()
+            ->assertSee('管理站位')
+            ->assertSee('平面坐标')
+            ->assertSee('默认站位')
+            ->assertSee('目标站位已不存在');
     }
 
     private function token(): string
