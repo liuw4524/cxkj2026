@@ -1,0 +1,5 @@
+.DS_Store
+player/node_modules
+miniapp/node_modules
+miniapp/dist
+miniapp/unpackage
